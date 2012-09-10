@@ -240,50 +240,6 @@ var Mustache;
     return this.compile(template)(view, partials);
   };
 
-  Renderer.prototype._section = function (name, context, text, callback) {
-    var value = context.lookup(name);
-
-    switch (typeof value) {
-    case "object":
-      if (isArray(value)) {
-        var buffer = "";
-
-        for (var i = 0, len = value.length; i < len; ++i) {
-          buffer += callback(context.push(value[i]), this);
-        }
-
-        return buffer;
-      }
-
-      return value ? callback(context.push(value), this) : "";
-    case "function":
-      var self = this;
-      var scopedRender = function (template) {
-        return self.render(template, context);
-      };
-
-      return value.call(context.view, text, scopedRender) || "";
-    default:
-      if (value) {
-        return callback(context, this);
-      }
-    }
-
-    return "";
-  };
-
-  Renderer.prototype._inverted = function (name, context, callback) {
-    var value = context.lookup(name);
-
-    // Use JavaScript's definition of falsy. Include empty arrays.
-    // See https://github.com/janl/mustache.js/issues/186
-    if (!value || (isArray(value) && value.length === 0)) {
-      return callback(context, this);
-    }
-
-    return "";
-  };
-
   Renderer.prototype._partial = function (name, context) {
     var fn = this._partialCache[name];
     return fn ? fn(context) : "";
@@ -327,53 +283,72 @@ var Mustache;
    * Renderer.
    */
   function compileTokens(tokens) {
-    var subproceedures = [];
+    function renderFunction(c, r, t) {
+      var fragments = [];
+      __render(tokens, c, r, t, fragments);
+      return fragments.join('');
+    }
+    return renderFunction;
+  }
+
+  function __render(tokens, c, r, t, fragments) {
+    var value, bounds, text, token;
+
     for (var i = 0, len = tokens.length; i < len; ++i) {
       token = tokens[i];
 
       switch (token[0]) {
       case "#":
-      case "^":
-        subproceedures[i] = compileTokens(token[4]);
-      }
-    }
-
-    function renderFunction(c, r, t) {
-      var body = [];
-      for (var i = 0, len = tokens.length; i < len; ++i) {
-        token = tokens[i];
-
-        switch (token[0]) {
-        case "#":
+        value = c.lookup(token[1]);
+        switch (typeof value) {
+        case "object":
+          if (isArray(value)) {
+            for (var j = 0, jj = value.length; j < jj; j++) {
+              __render(token[4], c.push(value[j]), r, t, fragments);
+            }
+          } else if (value) {
+            __render(token[4], c.push(value), r, t, fragments);
+          }
+          break;
+        case 'function':
           bounds = sectionBounds(token);
           text = t.slice(bounds[0], bounds[1]);
-          body.push(r._section(token[1], c, text, function (c, r) {
-            return subproceedures[i](c, r, t);
-          }));
-          break;
-        case "^":
-          body.push(r._inverted(token[1], c, function (c, r) {
-            return subproceedures[i](c, r, t);
-          }));
-          break;
-        case ">":
-          body.push(r._partial(token[1], c));
-          break;
-        case "&":
-          body.push(r._name(token[1], c));
-          break;
-        case "name":
-          body.push(r._escaped(token[1], c));
-          break;
-        case "text":
-          body.push(token[1]);
-          break;
-        }
-      }
 
-      return body.join('');
+          var scopedRender = function (template) {
+            return r.render(template, c);
+          };
+
+          fragments.push(value.call(c.view, text, scopedRender) || "");
+          break;
+        default:
+          if (value) {
+            __render(token[4], c, r, t, fragments);
+          }
+        }
+        break;
+       case "^":
+        value = c.lookup(token[1]);
+        // Use JavaScript's definition of falsy. Include empty arrays.
+        // See https://github.com/janl/mustache.js/issues/186
+        if (!value || (isArray(value) && value.length === 0)) {
+          __render(token[4], c, r, t, fragments);
+        }
+
+        break;
+      case ">":
+        fragments.push(r._partial(token[1], c));
+        break;
+      case "&":
+        fragments.push(r._name(token[1], c));
+        break;
+      case "name":
+        fragments.push(r._escaped(token[1], c));
+        break;
+      case "text":
+        fragments.push(token[1]);
+        break;
+      }
     }
-    return renderFunction;
   }
 
   function escapeTags(tags) {
